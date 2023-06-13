@@ -1,0 +1,12 @@
+html,
+body {
+  &::-webkit-scrollbar {
+    width: 0px;
+    height: 0px;
+  }
+}
+canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+}
