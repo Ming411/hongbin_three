@@ -10,6 +10,7 @@ let scene: THREE.Scene;
 let camera: THREE.PerspectiveCamera;
 let rendererWidth = window.innerWidth;
 let rendererHeight = window.innerHeight;
+
 onMounted(async () => {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
@@ -30,23 +31,29 @@ onMounted(async () => {
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
 
-  // 通过threejs的方式获取canvas的宽高
-  const {width, height} = renderer.getDrawingBufferSize(new THREE.Vector2());
-  const shader = new THREE.ShaderMaterial({
-    vertexShader,
-    fragmentShader,
-    uniforms: {
-      iResolution: {value: new THREE.Vector2(width, height)},
-      iTime: {value: 0.0}
-    }
-  });
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), shader);
+  const buffer = new THREE.WebGLRenderTarget(1000, 1000); // 1000 为渲染分辨率
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(10, 10),
+    new THREE.MeshPhysicalMaterial({
+      map: buffer.texture
+    })
+  );
+  const bufferScene = new THREE.Scene();
+  bufferScene.add(
+    new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({
+        color: '#faa'
+      })
+    )
+  );
   scene.add(plane);
-  plane.onBeforeRender = () => {
-    shader.uniforms.iTime.value += 0.01; // 动态更新时间
-  };
 
   function animate() {
+    renderer.setRenderTarget(buffer); // 设置渲染目标
+    renderer.render(bufferScene, camera);
+    renderer.setRenderTarget(null); // 设置渲染目标为默认
+
     controls.update();
     renderer.render(scene, camera);
     requestAnimationFrame(animate);

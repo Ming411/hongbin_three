@@ -1,319 +1,97 @@
-// 将 fragColor 替换为 gl_FragColor
-// 将 fragCoord 替换为 gl_FragCoord  // canvas 大小
-// 将 gl_FragCoord 指定 gl_FragCoord.xy
-// 将 mainImage 替换为 main 并清空参数
-// 导入需要的 uniform
-/* 
-// 替换
-  // vec2 xy = 2.0 * gl_FragCoord.xy - iResolution.xy;
-  vec2 xy = vUv - 0.5;
-  // vec3 ray = normalize(xy.x * right + xy.y * up + zoom * forward * iResolution.y);
-  vec3 ray = normalize(xy.x * right + xy.y * up + zoom * forward * 0.4);
- */
-
-//#define FAST_DESCENT
-//#define BLACK_AND_WHITE
-
-uniform vec3 iResolution;           // viewport resolution (in pixels)
-uniform float iTime;                 // shader playback time (in seconds)
+uniform sampler2D iChannel0;         // 这就看底部是否有引用贴图
+uniform sampler2D iChannel1;         // 这就看底部是否有引用贴图
+uniform vec3 iResolution;            // 必传 画布的分辨率
+uniform float iTime;                 // 必传 从0开始的时间
 varying vec2 vUv;
+float snoise(vec3 uv, float res)	// by trisomie21
+{
+  const vec3 s = vec3(1e0, 1e2, 1e4);
 
-#ifdef FAST_DESCENT
-const vec3 cameraDir = normalize(vec3(-2.0, -1.0, -4.0));
-const float cameraDist = 5.0;
-const float speed = 3.0;
-const float zoom = 2.5;
+  uv *= res;
 
-const vec3 windowColorA = vec3(0.0, 0.0, 1.5);
-const vec3 windowColorB = vec3(0.5, 1.5, 2.0);
+  vec3 uv0 = floor(mod(uv, res)) * s;
+  vec3 uv1 = floor(mod(uv + vec3(1.), res)) * s;
 
-const float fogOffset = 2.5;
-const float fogDensity = 0.6;
-const vec3 fogColor = vec3(0.25, 0.0, 0.3);
+  vec3 f = fract(uv);
+  f = f * f * (3.0 - 2.0 * f);
 
-const float lightHeight = 0.5;
-const float lightSpeed = 0.2;
-const vec3 lightColorA = vec3(0.6, 0.3, 0.1);
-const vec3 lightColorB = vec3(0.8, 0.6, 0.4);
+  vec4 v = vec4(uv0.x + uv0.y + uv0.z, uv1.x + uv0.y + uv0.z, uv0.x + uv1.y + uv0.z, uv1.x + uv1.y + uv0.z);
 
-const vec3 signColorA = vec3(0.0, 0.0, 1.5);
-const vec3 signColorB = vec3(3.0, 3.0, 3.0);
-#else
-const vec3 cameraDir = normalize(vec3(-2.0, -1.0, -2.0));
-const float cameraDist = 9.0;
-const float speed = 1.0;
-const float zoom = 3.5;
+  vec4 r = fract(sin(v * 1e-3) * 1e5);
+  float r0 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
 
-const vec3 windowColorA = vec3(0.0, 0.0, 1.5);
-const vec3 windowColorB = vec3(0.5, 1.5, 2.0);
+  r = fract(sin((v + uv1.z - uv0.z) * 1e-3) * 1e5);
+  float r1 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
 
-const float fogOffset = 7.0;
-const float fogDensity = 0.7;
-const vec3 fogColor = vec3(0.25, 0.0, 0.3);
-
-const float lightHeight = 0.0;
-const float lightSpeed = 0.15;
-const vec3 lightColorA = vec3(0.6, 0.3, 0.1);
-const vec3 lightColorB = vec3(0.8, 0.6, 0.4);
-
-const vec3 signColorA = vec3(0.0, 0.0, 1.5);
-const vec3 signColorB = vec3(3.0, 3.0, 3.0);
-#endif
-
-const float tau = 6.283185;
-
-float hash1(float p) {
-  vec3 p3 = fract(p * vec3(5.3983, 5.4427, 6.9371));
-  p3 += dot(p3, p3.yzx + 19.19);
-  return fract((p3.x + p3.y) * p3.z);
+  return mix(r0, r1, f.z) * 2. - 1.;
 }
 
-float hash1(vec2 p2) {
-  p2 = fract(p2 * vec2(5.3983, 5.4427));
-  p2 += dot(p2.yx, p2.xy + vec2(21.5351, 14.3137));
-  return fract(p2.x * p2.y * 95.4337);
-}
-
-float hash1(vec2 p2, float p) {
-  vec3 p3 = fract(vec3(5.3983 * p2.x, 5.4427 * p2.y, 6.9371 * p));
-  p3 += dot(p3, p3.yzx + 19.19);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
-vec2 hash2(vec2 p2, float p) {
-  vec3 p3 = fract(vec3(5.3983 * p2.x, 5.4427 * p2.y, 6.9371 * p));
-  p3 += dot(p3, p3.yzx + 19.19);
-  return fract((p3.xx + p3.yz) * p3.zy);
-}
-
-vec3 hash3(vec2 p2) {
-  vec3 p3 = fract(vec3(p2.xyx) * vec3(5.3983, 5.4427, 6.9371));
-  p3 += dot(p3, p3.yxz + 19.19);
-  return fract((p3.xxy + p3.yzz) * p3.zyx);
-}
-
-vec4 hash4(vec2 p2) {
-  vec4 p4 = fract(p2.xyxy * vec4(5.3983, 5.4427, 6.9371, 7.1283));
-  p4 += dot(p4, p4.yxwz + 19.19);
-  return fract((p4.xxxy + p4.yyzz + p4.zwww) * p4.wzyx);
-}
-
-float noise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash1(i + vec2(0.0, 0.0)), hash1(i + vec2(1.0, 0.0)), u.x), mix(hash1(i + vec2(0.0, 1.0)), hash1(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-
-vec4 castRay(vec3 eye, vec3 ray, vec2 center) {
-  vec2 block = floor(eye.xy);
-  vec3 ri = 1.0 / ray;
-  vec3 rs = sign(ray);
-  vec3 side = 0.5 + 0.5 * rs;
-  vec2 ris = ri.xy * rs.xy;
-  vec2 dis = (block - eye.xy + 0.5 + rs.xy * 0.5) * ri.xy;
-
-  for(int i = 0; i < 16; ++i) {
-    float d = dot(block - center, cameraDir.xy);
-    float height = 3.0 * hash1(block) - 1.0 + 1.5 * d - 0.1 * d * d;
-
-    vec2 lo0 = vec2(block);
-    vec2 loX = vec2(0.45, 0.45);
-    vec2 hi0 = vec2(block + 0.55);
-    vec2 hiX = vec2(0.45, 0.45);
-
-    float dist = 500.0;
-    float face = 0.0;
-
-    {
-      vec4 signHash = hash4(block);
-      vec2 center = vec2(0.2, -0.4) + vec2(0.6, -0.8) * signHash.xy;
-      float width = 0.06 + 0.1 * signHash.w;
-
-      vec3 lo = vec3(center.x - width, 0.55, -100.0);
-      vec3 hi = vec3(center.x + width, 0.99, center.y + width + height);
-
-      float s = step(0.5, signHash.z);
-      lo = vec3(block, 0.0) + mix(lo, lo.yxz, s);
-      hi = vec3(block, 0.0) + mix(hi, hi.yxz, s);
-
-      vec3 wall = mix(hi, lo, side);
-      vec3 t = (wall - eye) * ri;
-
-      vec3 dim = step(t.zxy, t) * step(t.yzx, t);
-      float maxT = dot(dim, t);
-      float maxFace = dim.x - dim.y;
-
-      vec3 p = eye + maxT * ray;
-      dim += step(lo, p) * step(p, hi);
-
-      if(dim.x * dim.y * dim.z > 0.5) {
-        dist = maxT;
-        face = maxFace;
-      }
-    }
-
-    for(int j = 0; j < 5; ++j) {
-      float top = height - 0.4 * float(j);
-      vec3 lo = vec3(lo0 + loX * hash2(block, float(j)), -100.0);
-      vec3 hi = vec3(hi0 + hiX * hash2(block, float(j) + 0.5), top);
-
-      vec3 wall = mix(hi, lo, side);
-      vec3 t = (wall - eye) * ri;
-
-      vec3 dim = step(t.zxy, t) * step(t.yzx, t);
-      float maxT = dot(dim, t);
-      float maxFace = dim.x - dim.y;
-
-      vec3 p = eye + maxT * ray;
-      dim += step(lo, p) * step(p, hi);
-
-      if(dim.x * dim.y * dim.z > 0.5 && maxT < dist) {
-        dist = maxT;
-        face = maxFace;
-      }
-    }
-
-    if(dist < 400.0) {
-      return vec4(dist, height, face, 1.0);
-    }
-
-    float t = eye.z * ri.z;
-    vec3 p = eye - t * ray;
-    vec2 g = p.xy - block;
-
-    vec2 dim = step(dis.xy, dis.yx);
-    dis += dim * ris;
-    block += dim * rs.xy;
-  }
-
-  return vec4(100.0, 0.0, 0.0, 1.0);
-}
-
-vec3 window(float z, vec2 pos, vec2 id) {
-  float windowSize = 0.03 + 0.12 * hash1(id + 0.1);
-  float windowProb = 0.3 + 0.8 * hash1(id + 0.2);
-  float depth = z / windowSize;
-  float level = floor(depth);
-  vec3 colorA = mix(windowColorA, windowColorB, hash3(id));
-  vec3 colorB = mix(windowColorA, windowColorB, hash3(id + 0.1));
-  vec3 color = mix(colorA, colorB, hash1(id, level));
-  color *= 0.3 + 0.7 * smoothstep(0.1, 0.5, noise(20.0 * pos + 100.0 * hash1(level)));
-  color *= smoothstep(windowProb - 0.2, windowProb + 0.2, hash1(id, level + 0.1));
-  return color * (0.5 - 0.5 * cos(tau * depth));
-}
-
-vec3 addLight(vec3 eye, vec3 ray, float res, float time, float height) {
-  vec2 q = eye.xy + ((height - eye.z) / ray.z) * ray.xy;
-
-  float row = floor(q.x + 0.5);
-  time += hash1(row);
-  float col = floor(0.125 * q.y - time);
-
-  float pos = 0.4 + 0.4 * cos(time + tau * hash1(vec2(row, col)));
-  vec3 lightPos = vec3(row, 8.0 * (col + time + pos), height);
-  vec3 lightDir = vec3(0.0, 1.0, 0.0);
-
-    // http://geomalgorithms.com/a07-_distance.html
-  vec3 w = eye - lightPos;
-  float a = dot(ray, ray);
-  float b = dot(ray, lightDir);
-  float c = dot(lightDir, lightDir);
-  float d = dot(ray, w);
-  float e = dot(lightDir, w);
-  float D = a * c - b * b;
-  float s = (b * e - c * d) / D;
-  float t = (a * e - b * d) / D;
-
-  t = max(t, 0.0);
-  float dist = distance(eye + s * ray, lightPos + t * lightDir);
-
-  float mask = smoothstep(res + 0.1, res, s);
-  float light = min(1.0 / pow(200.0 * dist * dist / t + 20.0 * t * t, 0.8), 2.0);
-  float fog = exp(-fogDensity * max(s - fogOffset, 0.0));
-  vec3 color = mix(lightColorA, lightColorB, hash3(vec2(row, col)));
-  return mask * light * fog * color;
-}
-
-vec3 addSign(vec3 color, vec3 pos, float side, vec2 id) {
-  vec4 signHash = hash4(id);
-  float s = step(0.5, signHash.z);
-  if((s - 0.5) * side < 0.1)
-    return color;
-
-  vec2 center = vec2(0.2, -0.4) + vec2(0.6, -0.8) * signHash.xy;
-  vec2 p = mix(pos.xz, pos.yz, s);
-  float halfWidth = 0.04 + 0.06 * signHash.w;
-
-  float charCount = floor(1.0 + 8.0 * hash1(id + 0.5));
-  if(center.y - p.y > 2.0 * halfWidth * (charCount + 1.0)) {
-    center.y -= 2.0 * halfWidth * (charCount + 1.5 + 5.0 * hash1(id + 0.6));
-    charCount = floor(2.0 + 12.0 * hash1(id + 0.7));
-    id += 0.05;
-  }
-
-  vec3 signColor = mix(signColorA, signColorB, hash3(id + 0.5));
-  vec3 outlineColor = mix(signColorA, signColorB, hash3(id + 0.6));
-  float flash = 6.0 - 24.0 * hash1(id + 0.8);
-  flash *= step(3.0, flash);
-  flash = smoothstep(0.1, 0.5, 0.5 + 0.5 * cos(flash * iTime));
-
-  vec2 halfSize = vec2(halfWidth, halfWidth * charCount);
-  center.y -= halfSize.y;
-  float outline = length(max(abs(p - center) - halfSize, 0.0)) / halfWidth;
-  color *= smoothstep(0.1, 0.4, outline);
-
-  vec2 charPos = 0.5 * (p - center + halfSize) / halfWidth;
-  vec2 charId = id + 0.05 + 0.1 * floor(charPos);
-  float flicker = hash1(charId);
-  flicker = step(0.93, flicker);
-  flicker = 1.0 - flicker * step(0.96, hash1(charId, iTime));
-
-  float char = -3.5 + 8.0 * noise(id + 6.0 * charPos);
-  charPos = fract(charPos);
-  char *= smoothstep(0.0, 0.4, charPos.x) * smoothstep(1.0, 0.6, charPos.x);
-  char *= smoothstep(0.0, 0.4, charPos.y) * smoothstep(1.0, 0.6, charPos.y);
-  color = mix(color, signColor, flash * flicker * step(outline, 0.01) * clamp(char, 0.0, 1.0));
-
-  outline = smoothstep(0.0, 0.2, outline) * smoothstep(0.5, 0.3, outline);
-  return mix(color, outlineColor, flash * outline);
-}
+float freqs[4];
 
 void main() {
-  vec2 center = -speed * iTime * cameraDir.xy;
-  vec3 eye = vec3(center, 0.0) - cameraDist * cameraDir;
+  freqs[0] = texture(iChannel1, vec2(0.01, 0.25)).x;
+  freqs[1] = texture(iChannel1, vec2(0.07, 0.25)).x;
+  freqs[2] = texture(iChannel1, vec2(0.15, 0.25)).x;
+  freqs[3] = texture(iChannel1, vec2(0.30, 0.25)).x;
 
-  vec3 forward = normalize(cameraDir);
-  vec3 right = normalize(cross(forward, vec3(0.0, 0.0, 1.0)));
-  vec3 up = cross(right, forward);
-  // vec2 xy = 2.0 * gl_FragCoord.xy - iResolution.xy;
-  vec2 xy = vUv - 0.5;
-  // vec3 ray = normalize(xy.x * right + xy.y * up + zoom * forward * iResolution.y);
-  vec3 ray = normalize(xy.x * right + xy.y * up + zoom * forward * 0.4);
+  float brightness = freqs[1] * 0.25 + freqs[2] * 0.25;
+  float radius = 0.24 + brightness * 0.2;
+  float invRadius = 1.0 / radius;
 
-  vec4 res = castRay(eye, ray, center);
-  vec3 p = eye + res.x * ray;
+  vec3 orange = vec3(0.8, 0.65, 0.3);
+  vec3 orangeRed = vec3(0.8, 0.35, 0.1);
+  float time = iTime * 0.1;
+  float aspect = 1.0;  // 当画面产生变形时，需要传入画布的宽高比
+  // float aspect = iResolution.x / iResolution.y;
+  // vec2 uv = gl_FragCoord.xy / iResolution.xy;
+  vec2 uv = vUv;
+  vec2 p = -0.5 + uv;
+  p.x *= aspect;
 
-  vec2 block = floor(p.xy);
-  vec3 color = window(p.z - res.y, p.xy, block);
+  float fade = pow(length(2.0 * p), 0.5);
+  float fVal1 = 1.0 - fade;
+  float fVal2 = 1.0 - fade;
 
-  color = addSign(color, vec3(p.xy - block, p.z - res.y), res.z, block);
-  color = mix(vec3(0.0), color, abs(res.z));
+  float angle = atan(p.x, p.y) / 6.2832;
+  float dist = length(p);
+  vec3 coord = vec3(angle, dist, time * 0.1);
 
-  float fog = exp(-fogDensity * max(res.x - fogOffset, 0.0));
-  color = mix(fogColor, color, fog);
+  float newTime1 = abs(snoise(coord + vec3(0.0, -time * (0.35 + brightness * 0.001), time * 0.015), 15.0));
+  float newTime2 = abs(snoise(coord + vec3(0.0, -time * (0.15 + brightness * 0.001), time * 0.015), 45.0));
+  for(int i = 1; i <= 7; i++) {
+    float power = pow(2.0, float(i + 1));
+    fVal1 += (0.5 / power) * snoise(coord + vec3(0.0, -time, time * 0.2), (power * (10.0) * (newTime1 + 1.0)));
+    fVal2 += (0.5 / power) * snoise(coord + vec3(0.0, -time, time * 0.2), (power * (25.0) * (newTime2 + 1.0)));
+  }
 
-  float time = lightSpeed * iTime;
-  color += addLight(eye.xyz, ray.xyz, res.x, time, lightHeight - 0.6);
-  color += addLight(eye.yxz, ray.yxz, res.x, time, lightHeight - 0.4);
-  color += addLight(vec3(-eye.xy, eye.z), vec3(-ray.xy, ray.z), res.x, time, lightHeight - 0.2);
-  color += addLight(vec3(-eye.yx, eye.z), vec3(-ray.yx, ray.z), res.x, time, lightHeight);
+  float corona = pow(fVal1 * max(1.1 - fade, 0.0), 2.0) * 50.0;
+  corona += pow(fVal2 * max(1.1 - fade, 0.0), 2.0) * 50.0;
+  corona *= 1.2 - newTime1;
+  vec3 sphereNormal = vec3(0.0, 0.0, 1.0);
+  vec3 dir = vec3(0.0);
+  vec3 center = vec3(0.5, 0.5, 1.0);
+  vec3 starSphere = vec3(0.0);
 
-#ifdef BLACK_AND_WHITE
-  float c = clamp(dot(vec3(0.4, 0.3, 0.4), color), 0.0, 1.0);
-  c = 1.0 - pow(1.0 - pow(c, 2.0), 4.0);
-  color = vec3(c);
-#endif
+  vec2 sp = -1.0 + 2.0 * uv;
+  sp.x *= aspect;
+  sp *= (2.0 - brightness);
+  float r = dot(sp, sp);
+  float f = (1.0 - sqrt(abs(1.0 - r))) / (r) + brightness * 0.5;
+  if(dist < radius) {
+    corona *= pow(dist * invRadius, 24.0);
+    vec2 newUv;
+    newUv.x = sp.x * f;
+    newUv.y = sp.y * f;
+    newUv += vec2(time, 0.0);
 
-  gl_FragColor = vec4(color, 1.0);
+    vec3 texSample = texture(iChannel0, newUv).rgb;
+    float uOff = (texSample.g * brightness * 4.5 + time);
+    vec2 starUV = newUv + vec2(uOff, 0.0);
+    starSphere = texture(iChannel0, starUV).rgb;
+  }
+
+  float starGlow = min(max(1.0 - dist * (1.0 - brightness), 0.0), 1.0);
+	//gl_FragColor.rgb	= vec3( r );
+  gl_FragColor.rgb = vec3(f * (0.75 + brightness * 0.3) * orange) + starSphere + corona * orange + starGlow * orangeRed;
+  gl_FragColor.a = 1.0;
 }
